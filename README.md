@@ -6,10 +6,14 @@ This is a proof of concept synology note station to markdown converter. The orig
 
 ## What?
 
-As you might witness, the code itself is very messy. It's intended as a simple script for my personal use, so it had to be quick and dirty...
-So synology proprietary *.nsx files are just plain old zip files. It just have files with file_, note_, and nb_ prefix.
-file_ files obviously are attatchment files, with md5 hash to determine which is which. note_ files are json files, with their value of "contents" key being plain html.
-nb_ files are notebook files, which are like folders for aggregating all the notes. Hence, this script treats it as a subdirectory for export.
+As you might witness, the code itself is very messy. 
+It's intended as a simple script for my personal use, so it had to be quick and dirty...
+So synology proprietary *.nsx files are just plain old zip files. 
+With config.json file in place, it guides the list of notebooks, noteds, todos, and shortcuts.
+Notebooks are like folders, and each notes are markdown files.
+Attachments are descripted inside each notes, and will be saved inside folder "attachment".
+Image attachment will replace img tag's source.
+Other files will be converted into anchor tags.
 
 ## How?
 
@@ -30,6 +34,6 @@ npm run convert
 ```
 
 ## Limitations
-
-Note attatchment files are also here, but it is not yet associated with individual notes. 
-Note that it shall be done easily with values of "attatchment" key of each notes, while they have md5 hashes and original file names.
+* Compatibility with older Note Station exports are not thoroughly tested.
+* TODO List, and shortcuts are not supported (yet).
+* Do note that logseq image files have different referencing scheme. This is not implemented (yet).

@@ -10,11 +10,13 @@
   "author": "FDK0901",
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^22.5.3",
     "@types/uuid": "^10.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4"
   },
   "dependencies": {
+    "cheerio": "^1.0.0",
     "fflate": "^0.8.2",
     "file-type": "^19.4.1",
     "html-to-md": "^0.8.6",

@@ -4,6 +4,7 @@ import { unzipSync } from "fflate";
 import { v4 as uuidv4 } from "uuid";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { fileTypeFromBuffer } from "file-type";
+import * as cheerio from 'cheerio';
 
 /* utf.js - UTF-8 <=> UTF-16 convertion
  *
@@ -57,91 +58,143 @@ function findNoteBookNameFromId(id: string, bookArr: { name: string, value: stri
 const dir = "./place_nsx_here/";
 
 (async () => {
+    //Read directory based off of the variable dir
     const filesList = await promises.readdir(dir);
+    //Asynchronously loop all the files.
     for await (const fileName of filesList) {
+        //Skip none nsx files.
         if (!fileName.includes(".nsx")) {
-            throw new Error("Not an nsx file!");
+            continue;
         }
         const fileToUnzip = await promises.readFile(dir + fileName);
+        //Check if a file with extension .nsx is actually a zip file.
+        const zipFileType = await fileTypeFromBuffer(fileToUnzip);
+        if (zipFileType?.mime !== 'application/zip') {
+            throw new Error("This file is not a valid nsx file! : " + fileName);
+        }
+        //Create a directory to export notes.
         const singleNsxDirectory = "./output_" + parse(fileName).name;
-        await promises.mkdir(singleNsxDirectory);
+        await promises.mkdir(singleNsxDirectory).catch(async (err: Error) => {
+            if (err.message.includes("EEXIST")) {
+                await promises.rm(singleNsxDirectory, {
+                    recursive: true
+                }).then(async () => {
+                    await promises.mkdir(singleNsxDirectory);
+                });
+            }
+        });
+        //Unzip single .nsx file and uppend it to memory to make a map.
         const unzipped = unzipSync(fileToUnzip);
-        const unzippedArr = Object.entries(unzipped);
-        let configJson: {
-            note: string[];
-            notebook: string[];
-            todo: string[];
-        } = {
-            note: [],
-            notebook: [],
-            todo: [],
-        };
-        let noteBookArray: { name: string, value: string }[] = [];
-        let noteArray: { name: string, value: string, notebook: string }[] = [];
-        let attachmentDirCreated = false;
-        for await (const unzippedKeyValue of unzippedArr) {
-            const unzippedFileName = unzippedKeyValue[0];
-            const unzippedFileContent = unzippedKeyValue[1];
-            if (unzippedFileName === "config.json") {
-                const numArr = Array.from(unzippedFileContent);
-                const jsonString = String.fromCharCode.apply(null, numArr);
-                configJson = JSON.parse(jsonString);
-            } else {
-                if (unzippedFileName.startsWith("nb")) {
-                    const jsonString = Utf8ArrayToStr(unzippedFileContent);
-                    const notebookJson = JSON.parse(jsonString);
-                    let noteBookName: string = "";
-                    await promises.mkdir(singleNsxDirectory + "/" + notebookJson.title.replace(" ", ""))
-                        .then((_) => {
-                            noteBookName = notebookJson.title.replace(" ", "");
-                        })
-                        .catch(async (err: Error) => {
-                            if (err.message.includes("EEXIST")) {
-                                const newUuid = uuidv4();
-                                await promises.mkdir(singleNsxDirectory + "/" + notebookJson.title.replace(" ", "") + newUuid);
-                                noteBookName = notebookJson.title.replace(" ", "") + newUuid;
-                            }
-                        });
-                    noteBookArray.push({
-                        name: noteBookName,
-                        value: unzippedFileName,
-                    });
-                } else if (unzippedFileName.startsWith("note")) {
-                    const abc = "";
-                    const jsonString = Utf8ArrayToStr(unzippedFileContent);
-                    const noteJson = JSON.parse(jsonString);
-                    const noteTitle = noteJson.title.length > 20 ? noteJson.title.substring(0, 20).replace("/", "_") : noteJson.title.replace("/", "_");
-                    const noteContent = noteJson.content;
-                    const noteBookId = noteJson.parent_id;
-                    const noteAtt = Object.entries(noteJson.attachment);
-                    const translator = new NodeHtmlMarkdown();
-                    const noteMD = `# ${noteTitle}` + translator.translate(noteContent);
-                    noteArray.push({
-                        name: noteTitle,
-                        value: noteMD,
-                        notebook: noteBookId,
-                    });
-                } else if (unzippedFileName.startsWith("file")) {
-                    const fileType = await fileTypeFromBuffer(unzippedFileContent);
-                    if (fileType !== undefined) {
-                        if (!attachmentDirCreated) {
-                            await promises.mkdir(singleNsxDirectory + "/attachment");
-                            attachmentDirCreated = true;
-                        }
-                        await promises.writeFile(singleNsxDirectory + "/attachment" + "/" + unzippedFileName + "." + fileType.ext, unzippedFileContent);
+        //We will use this map to read and write every files inside this .nsx archive.
+        const unzippedMap = new Map(Object.entries(unzipped));
+
+        //Read config.json file to see the structure.
+        const configJsonUint8Arr = unzippedMap.get("config.json");
+        if (configJsonUint8Arr === undefined) {
+            throw new Error("This file includes malformed config.json file. : " + fileName);
+        }
+        const numArr = Array.from(configJsonUint8Arr);
+        const jsonString = String.fromCharCode.apply(null, numArr);
+        const configJson: {
+            note: string[] | null;
+            notebook: string[] | null;
+            todo: string[] | null;
+            shortcut: string[] | null;
+        } = JSON.parse(jsonString);
+
+        //Create a map of all the notebooks. Key shall be the synology key, and value shall be respective directory name.
+        const notebookMap: Map<string, string> = new Map();
+
+        //Iterage through each and every notebooks
+        if (configJson.notebook !== null) {
+            for await (const notebook of configJson.notebook) {
+                const notebookUint8Arr = unzippedMap.get(notebook);
+                if (notebookUint8Arr !== undefined) {
+                    const jsonString = Utf8ArrayToStr(notebookUint8Arr);
+                    const jsonObject = JSON.parse(jsonString);
+                    let notebookName = jsonObject.title.trim().replace("\n", "").replace("\r", "");
+                    if (notebookName === undefined || notebookName === "") {
+                        notebookName = "untitled_" + uuidv4();
                     }
+                    //Create nested directories accordingly
+                    await promises.mkdir(singleNsxDirectory + "/" + notebookName).catch(async (err: Error) => {
+                        if (err.message.includes("EEXIST")) {
+                            notebookName = notebookName + "_" + uuidv4();
+                            await promises.mkdir(singleNsxDirectory + "/" + notebookName);
+                        }
+                    }).finally(() => {
+                        notebookMap.set(notebook, notebookName);
+                    });
+                }
+            }
+            await promises.mkdir(singleNsxDirectory + "/" + "attachment").catch(async (err: Error) => {
+                if (err.message.includes("EEXIST")) {
+                    await promises.rm(singleNsxDirectory + "/" + "attachment", {
+                        recursive: true
+                    }).then(async () => {
+                        await promises.mkdir(singleNsxDirectory + "/" + "attachment");
+                    });
+                }
+            })
+
+        }
+
+        //Iterate through each and every notes
+        if (configJson.note !== null) {
+            for await (const note of configJson.note) {
+                const noteUint8Arr = unzippedMap.get(note);
+                if (noteUint8Arr !== undefined) {
+                    const jsonString = Utf8ArrayToStr(noteUint8Arr);
+                    const jsonObject = JSON.parse(jsonString);
+
+                    const parent_id = jsonObject.parent_id;
+                    const title = jsonObject.title.length > 20 ? jsonObject.title.substring(0, 20).replace("/", "_") : jsonObject.title.replace("/", "_");
+                    const content = jsonObject.content;
+
+                    const $ = cheerio.load(content);
+
+                    const attachment = jsonObject.attachment;
+
+                    if (attachment !== undefined) {
+                        for await (const attSym of Object.entries<any>(attachment)) {
+                            const attObject = attSym[1];
+                            const attFileName = attObject.name;
+                            const attMD5 = attObject.md5;
+                            const attRef = attObject.ref;
+                            const attType = attObject.type;
+
+                            //Get file content from md5 hash.
+                            const attFileUint8Arr = unzippedMap.get("file_" + attMD5);
+                            if (attFileUint8Arr !== undefined) {
+                                //Save file content with original file name to attachment directory.
+                                await promises.writeFile(singleNsxDirectory + "/" + "attachment" + "/" + attFileName, attFileUint8Arr);
+
+                                //Not an image, then replace it with anchor.
+                                if (!attType.includes("image")) {
+                                    $('a').append(`<a href="../attachment/${attFileName}">${attFileName}</a>`)
+                                } else {
+                                    //Image, so we just replace the source.
+                                    $(`img[ref=${attRef}]`).replaceWith(
+                                        function () {
+                                            return $(this).attr("src", `../attachment/${attFileName}`);
+                                        }
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    const translator = new NodeHtmlMarkdown();
+                    const md = translator.translate($.html());
+
+                    const directoryToSave = notebookMap.get(parent_id);
+                    const savePath = singleNsxDirectory + "/" + directoryToSave + "/" + title + ".md";
+                    await promises.writeFile(savePath, md).catch(async (err: Error) => {
+                        await promises.writeFile("./" + title + ".md", md);
+                    });
+
                 }
             }
         }
-        await promises.mkdir(singleNsxDirectory + "/" + "indeterminant");
-        for await (const note of noteArray) {
-            const notebookId = note.notebook;
-            const savePath = singleNsxDirectory + "/" + findNoteBookNameFromId(notebookId, noteBookArray) + "/" + note.name + ".md";
-            await promises.writeFile(savePath, note.value).catch(async (err) => {
-                await promises.writeFile("./" + note.name + ".md", note.value);
-            });
-        }
-
 
     }
     process.exit();
