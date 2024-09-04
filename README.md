@@ -10,7 +10,7 @@ As you might witness, the code itself is very messy.
 It's intended as a simple script for my personal use, so it had to be quick and dirty...
 So synology proprietary *.nsx files are just plain old zip files. 
 With config.json file in place, it guides the list of notebooks, noteds, todos, and shortcuts.
-Notebooks are like folders, and each notes are markdown files.
+Notebooks are like folders, and each notes are json files with html content.
 Attachments are descripted inside each notes, and will be saved inside folder "attachment".
 Image attachment will replace img tag's source.
 Other files will be converted into anchor tags.
