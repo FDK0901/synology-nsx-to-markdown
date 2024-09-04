@@ -17,7 +17,7 @@ Put your nsx files inside ./place_nsx_here directory.
 
 ```bash
 
-npm
+npm i
 
 ```
 
